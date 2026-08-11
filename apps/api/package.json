@@ -1,0 +1,43 @@
+﻿{
+    "name":  "@fleet/api",
+    "version":  "0.1.0",
+    "private":  true,
+    "type":  "module",
+    "main":  "dist/index.js",
+    "scripts":  {
+                    "dev":  "tsx watch src/index.ts",
+                    "build":  "tsc -p tsconfig.json",
+                    "start":  "node dist/index.js",
+                    "test":  "vitest run",
+                    "test:watch":  "vitest",
+                    "typecheck":  "tsc -p tsconfig.json --noEmit",
+                    "db:generate":  "drizzle-kit generate",
+                    "db:migrate":  "tsx src/db/migrate.ts",
+                    "shell:verify":  "tsx scripts/verify-shell-live.ts",
+                    "mesh:verify":  "tsx scripts/verify-mesh-live.ts",
+                    "inventory:verify":  "tsx scripts/verify-inventory.ts",
+                    "netbird:bootstrap":  "tsx scripts/bootstrap-netbird.ts"
+                },
+    "dependencies":  {
+                         "@fastify/multipart":  "^10.1.0",
+                         "@fastify/websocket":  "^11.3.0",
+                         "better-sqlite3":  "^13.0.3",
+                         "drizzle-orm":  "^0.45.2",
+                         "fastify":  "^5.11.3",
+                         "guacamole-lite":  "^1.2.0",
+                         "papaparse":  "^5.5.2",
+                         "ssh2":  "^1.17.0",
+                         "xlsx":  "^0.18.5",
+                         "zod":  "^4.4.3"
+                     },
+    "devDependencies":  {
+                            "@types/better-sqlite3":  "^7.6.13",
+                            "@types/node":  "^24.0.0",
+                            "@types/papaparse":  "^5.3.15",
+                            "@types/ssh2":  "^1.15.5",
+                            "drizzle-kit":  "^0.31.10",
+                            "tsx":  "^4.23.12",
+                            "typescript":  "^5.7.3",
+                            "vitest":  "^4.1.10"
+                        }
+}

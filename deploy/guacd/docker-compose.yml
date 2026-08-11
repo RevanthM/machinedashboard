@@ -1,0 +1,39 @@
+# guacd — the protocol daemon behind the in-browser remote desktop (F8).
+#
+# Note what is NOT here: no mesh client, no host networking, no special routing.
+# That is deliberate.
+#
+# PRD §14 names "guacd cannot reach mesh IPs from inside Docker" as risk #1 and
+# suggests network_mode:host or running a mesh client in the container. Neither
+# works for a Windows operator: containers live in a WSL2 VM, host networking is
+# unavailable there, and the mesh TUN adapter belongs to the Windows host.
+#
+# Fleet Console inverts the problem instead. The API process runs natively, has
+# full mesh access, and opens a single-use loopback TCP shim per session; guacd
+# is handed `host.docker.internal:<shim port>` and never needs to route to
+# 100.x at all. See apps/api/src/guac/shim.ts.
+#
+# Consequence: guacd only ever dials back to the Docker host, so it needs no
+# privileges and no network tricks — and the same compose file works on Linux
+# and macOS operators unchanged.
+
+services:
+  guacd:
+    image: guacamole/guacd:1.5.5
+    container_name: fleet-guacd
+    restart: unless-stopped
+    ports:
+      # Loopback only. Exposing 4822 on all interfaces would let anything on the
+      # LAN drive guacd, and guacd will connect wherever it is told to.
+      - "127.0.0.1:4822:4822"
+    extra_hosts:
+      # Required on Linux, where host.docker.internal is not automatic. Harmless
+      # on Docker Desktop, which provides it already.
+      - "host.docker.internal:host-gateway"
+    environment:
+      GUACD_LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4822 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

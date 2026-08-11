@@ -1,0 +1,27 @@
+{
+  "name": "fleet-console",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local-first fleet dashboard: NetBird mesh + SSH/RDP + Ollama telemetry + agentic LLM shell",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run dev -w @fleet/api",
+    "dev:web": "npm run dev -w @fleet/web",
+    "build": "npm run build -w @fleet/api && npm run build -w @fleet/web",
+    "db:migrate": "npm run db:migrate -w @fleet/api",
+    "db:generate": "npm run db:generate -w @fleet/api",
+    "test": "npm run test -w @fleet/api",
+    "typecheck": "npm run typecheck -w @fleet/api && npm run typecheck -w @fleet/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  }
+}

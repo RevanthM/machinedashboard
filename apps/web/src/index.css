@@ -1,0 +1,35 @@
+@import 'tailwindcss';
+
+/*
+ * PRD §10: dark-first, dense, terminal-adjacent. Machine data is monospaced and
+ * uses tabular figures so live-updating numbers do not jitter column width.
+ */
+@theme {
+  --color-surface: #0b0e14;
+  --color-panel: #11151d;
+  --color-edge: #1e2530;
+  --color-ink: #d5dae3;
+  --color-muted: #7b8494;
+  --color-ok: #3fb950;
+  --color-warn: #d29922;
+  --color-bad: #f85149;
+  --color-accent: #58a6ff;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 14px;
+}
+
+.mono {
+  font-family: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}

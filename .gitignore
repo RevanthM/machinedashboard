@@ -1,0 +1,28 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Local state — contains host records, metrics, audit log
+.fleet-console/
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets. Never commit.
+.env
+.env.local
+*.pem
+*.key
+!*.example
+secrets.vault
+
+# Inventory files often carry inline private keys (see PREREQS.md)
+*.xlsx
+*.xls
+!**/templates/*.xlsx
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

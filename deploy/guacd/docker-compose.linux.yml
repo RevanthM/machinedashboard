@@ -1,0 +1,36 @@
+# guacd on a Linux host that is itself a mesh member.
+#
+# This is the better deployment, and it is what `docker-compose.yml` (the
+# Docker Desktop / Windows variant) has to work around.
+#
+# On Linux, `network_mode: host` gives the container the host's network stack
+# directly — including its mesh interface. So guacd can dial 100.x.x.x itself
+# and the loopback shim is unnecessary. On Windows the same container lives in a
+# WSL2 VM whose network stack has no mesh route, which is the entire reason
+# shim.ts exists.
+#
+# Deploy this on old6700k-ubuntu (192.168.4.29 / 100.74.173.51) and point the
+# operator's .env at it:
+#
+#   GUACD_HOST=192.168.4.29
+#   GUACD_PORT=4822
+#   GUAC_SHIM_ADVERTISE_HOST=      # empty -> API dials the mesh address directly
+#
+# Security note: host networking means guacd binds 4822 on every interface of
+# that machine, and anything that can reach it can ask it to connect anywhere.
+# The firewall rule below is not optional — restrict 4822 to the operator.
+
+services:
+  guacd:
+    image: guacamole/guacd:1.5.5
+    container_name: fleet-guacd
+    restart: unless-stopped
+    # Gives the container the host's interfaces, mesh included. Linux only.
+    network_mode: host
+    environment:
+      GUACD_LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4822 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
