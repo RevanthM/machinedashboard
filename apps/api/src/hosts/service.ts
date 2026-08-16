@@ -154,3 +154,102 @@ export function ollamaUrl(host: Host): string | null {
   if (!resolved) return null;
   return `http://${resolved.address}:${config.ollamaPort}`;
 }
+
+export type LlmWhere = 'forced_operator' | 'this_host' | 'operator_fallback' | 'unavailable';
+
+export interface HostLlmInfo {
+  /** Model used for per-host chat (AGENT_MODEL or OLLAMA_MODEL). */
+  chatModel: string;
+  /** Model used for benchmarks / fleetboard when not overridden. */
+  benchModel: string;
+  /** Where chat inference will run right now. */
+  where: LlmWhere;
+  /** Resolved Ollama base URL for chat, if any. */
+  baseUrl: string | null;
+  /** This host's own Ollama URL (may be unused when operator override is set). */
+  hostOllamaUrl: string | null;
+  hostOllamaUp: boolean;
+  operatorOllamaUp: boolean;
+  /** One-line explanation for the UI. */
+  summary: string;
+}
+
+async function probeOllama(url: string, timeoutMs = 2500): Promise<boolean> {
+  try {
+    const res = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(timeoutMs) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Describe which model chat/bench will use for a host, and where chat runs.
+ * Safe for list endpoints — never throws.
+ */
+export async function describeHostLlm(host: Host): Promise<HostLlmInfo> {
+  const chatModel = (config.agent.model || config.ollamaModel).trim() || 'gemma4:e2b';
+  const benchModel = config.ollamaModel;
+  const hostOllamaUrl = ollamaUrl(host);
+  const operatorUrl = `http://127.0.0.1:${config.ollamaPort}`;
+
+  if (config.agent.modelBaseUrl) {
+    const baseUrl = config.agent.modelBaseUrl.replace(/\/+$/, '');
+    const up = await probeOllama(baseUrl);
+    return {
+      chatModel,
+      benchModel,
+      where: 'forced_operator',
+      baseUrl: up ? baseUrl : null,
+      hostOllamaUrl,
+      hostOllamaUp: hostOllamaUrl ? await probeOllama(hostOllamaUrl) : false,
+      operatorOllamaUp: up,
+      summary: up
+        ? `Chat uses ${chatModel} on the operator Ollama (${baseUrl}). Tools still run on this host.`
+        : `Chat is configured for ${chatModel} at ${baseUrl}, but that Ollama is not reachable.`,
+    };
+  }
+
+  const [hostUp, operatorUp] = await Promise.all([
+    hostOllamaUrl ? probeOllama(hostOllamaUrl) : Promise.resolve(false),
+    probeOllama(operatorUrl),
+  ]);
+
+  if (hostUp && hostOllamaUrl) {
+    return {
+      chatModel,
+      benchModel,
+      where: 'this_host',
+      baseUrl: hostOllamaUrl,
+      hostOllamaUrl,
+      hostOllamaUp: true,
+      operatorOllamaUp: operatorUp,
+      summary: `Chat uses ${chatModel} on this host's Ollama.`,
+    };
+  }
+
+  if (operatorUp) {
+    return {
+      chatModel,
+      benchModel,
+      where: 'operator_fallback',
+      baseUrl: operatorUrl,
+      hostOllamaUrl,
+      hostOllamaUp: false,
+      operatorOllamaUp: true,
+      summary: `Chat uses ${chatModel} on the operator laptop (this host's Ollama is down). Tools still run on this host.`,
+    };
+  }
+
+  return {
+    chatModel,
+    benchModel,
+    where: 'unavailable',
+    baseUrl: null,
+    hostOllamaUrl,
+    hostOllamaUp: false,
+    operatorOllamaUp: false,
+    summary: `No reachable Ollama for chat (${chatModel}). Start Ollama on this host or the operator machine.`,
+  };
+}
+

@@ -62,6 +62,12 @@ describe('deny list — typed confirmation regardless of mode', () => {
     expect(decision.action).toBe('require_typed_confirmation');
   });
 
+  it('trust mode auto-allows even deny-list commands', () => {
+    const decision = decide('rm -rf /', 'trust');
+    expect(decision.action).toBe('allow');
+    if (decision.action === 'allow') expect(decision.approvedBy).toBe('auto');
+  });
+
   it('is not fooled by extra whitespace', () => {
     expect(decide('rm    -rf     /').action).toBe('require_typed_confirmation');
   });
@@ -119,7 +125,18 @@ describe('credential-shaped content', () => {
 });
 
 describe('read-only tools', () => {
-  it.each(['read_file', 'list_dir', 'get_specs', 'get_llm_metrics'] as ToolName[])(
+  it.each([
+    'read_file',
+    'list_dir',
+    'download_file',
+    'screenshot',
+    'list_apps',
+    'get_clipboard',
+    'read_ui_text',
+    'wait',
+    'get_specs',
+    'get_llm_metrics',
+  ] as ToolName[])(
     '%s auto-runs in every mode',
     (tool) => {
       for (const mode of MODES) {
@@ -138,7 +155,16 @@ describe('read-only tools', () => {
 
 describe('approval modes', () => {
   it('always_ask gates every mutating tool', () => {
-    for (const tool of ['run_command', 'write_file', 'upload_attachment'] as ToolName[]) {
+    for (const tool of [
+      'run_command',
+      'write_file',
+      'upload_attachment',
+      'open_app',
+      'paste_text',
+      'type_text',
+      'press_keys',
+      'prompt_gui_app',
+    ] as ToolName[]) {
       expect(decide('echo hello', 'always_ask', tool).action).toBe('require_approval');
     }
   });

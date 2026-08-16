@@ -12,7 +12,7 @@
  * Hosts that fail are skipped with backoff rather than retried tightly — an
  * asleep laptop must not cost a connection attempt every 15 seconds.
  */
-import { and, eq, gte, lt } from 'drizzle-orm';
+import { and, eq, gte, inArray, lt } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { hostMetrics, hostSpecs, hosts, type Host } from '../db/schema.js';
 import type { Transport } from '../transport/types.js';
@@ -82,6 +82,7 @@ export class TelemetryPoller {
         return !state || state.nextAttemptAt <= now;
       });
 
+      const failedIds: string[] = [];
       const samples = await Promise.all(
         due.map(async (host) => {
           try {
@@ -91,6 +92,7 @@ export class TelemetryPoller {
             return { host, sample };
           } catch (err) {
             this.recordFailure(host.id);
+            failedIds.push(host.id);
             this.opts.onError?.(host.id, err);
             return null;
           }
@@ -98,9 +100,9 @@ export class TelemetryPoller {
       );
 
       const successful = samples.filter((s): s is { host: Host; sample: Sample } => s !== null);
+      const ts = Math.floor(Date.now() / 1000);
 
       if (successful.length > 0) {
-        const ts = Math.floor(Date.now() / 1000);
         await this.opts.db.insert(hostMetrics).values(
           successful.map(({ host, sample }) => ({
             hostId: host.id,
@@ -122,8 +124,20 @@ export class TelemetryPoller {
 
         await this.opts.db
           .update(hosts)
-          .set({ status: 'online', lastSeenAt: ts })
-          .where(eq(hosts.id, successful[0]!.host.id));
+          .set({ status: 'online', lastSeenAt: ts, lastCheckedAt: ts })
+          .where(
+            inArray(
+              hosts.id,
+              successful.map(({ host }) => host.id),
+            ),
+          );
+      }
+
+      if (failedIds.length > 0) {
+        await this.opts.db
+          .update(hosts)
+          .set({ lastCheckedAt: ts })
+          .where(inArray(hosts.id, failedIds));
       }
 
       await this.pruneIfDue();

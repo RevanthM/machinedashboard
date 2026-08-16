@@ -14,17 +14,20 @@
  * skip. See `execute()` in tools.ts: there is exactly one path to a transport,
  * and it goes through `evaluateToolCall`.
  *
- * Three modes (R-30):
+ * Four modes (R-30):
  *   always_ask   — every side-effecting tool needs a human (default)
  *   writes_only  — reads run unattended; anything that mutates asks
  *   allowlist    — additionally auto-runs commands matching operator patterns
+ *   trust        — auto-run everything, including the deny list. Single-operator
+ *                  local fleets only (API is loopback-bound). Opt-in via
+ *                  AGENT_APPROVAL_MODE=trust — never the default.
  *
- * Regardless of mode, the hardcoded deny list demands typed confirmation. It is
- * deliberately not overridable: the modes exist to reduce friction on routine
- * work, not to make `mkfs` a one-click operation.
+ * Outside `trust`, the hardcoded deny list demands typed confirmation. It is
+ * not overridable by allowlist: those modes reduce friction on routine work,
+ * not make `mkfs` a one-click operation.
  */
 
-export type ApprovalMode = 'always_ask' | 'writes_only' | 'allowlist';
+export type ApprovalMode = 'always_ask' | 'writes_only' | 'allowlist' | 'trust';
 
 export type ToolName =
   | 'run_command'
@@ -32,6 +35,17 @@ export type ToolName =
   | 'write_file'
   | 'list_dir'
   | 'upload_attachment'
+  | 'download_file'
+  | 'screenshot'
+  | 'list_apps'
+  | 'open_app'
+  | 'paste_text'
+  | 'type_text'
+  | 'press_keys'
+  | 'get_clipboard'
+  | 'read_ui_text'
+  | 'wait'
+  | 'prompt_gui_app'
   | 'get_specs'
   | 'get_llm_metrics';
 
@@ -39,6 +53,12 @@ export type ToolName =
 export const READ_ONLY_TOOLS: readonly ToolName[] = [
   'read_file',
   'list_dir',
+  'download_file',
+  'screenshot',
+  'list_apps',
+  'get_clipboard',
+  'read_ui_text',
+  'wait',
   'get_specs',
   'get_llm_metrics',
 ];
@@ -48,6 +68,17 @@ export const MUTATING_TOOLS: readonly ToolName[] = [
   'run_command',
   'write_file',
   'upload_attachment',
+  'open_app',
+  'paste_text',
+  'type_text',
+  'press_keys',
+  'prompt_gui_app',
+];
+
+/** All registered tool names — used to reject / remap model hallucinations. */
+export const KNOWN_TOOLS: readonly ToolName[] = [
+  ...READ_ONLY_TOOLS,
+  ...MUTATING_TOOLS,
 ];
 
 export type GateDecision =
@@ -191,6 +222,16 @@ export interface GateInput {
 
 export function evaluateToolCall(input: GateInput): GateDecision {
   const normalized = normalize(input.subject);
+
+  // Explicit full-trust mode: auto-allow before deny/credential checks.
+  // Opt-in only — see ApprovalMode docs.
+  if (input.mode === 'trust') {
+    return {
+      action: 'allow',
+      approvedBy: 'auto',
+      reason: 'Approval mode is "trust" — commands run without confirmation.',
+    };
+  }
 
   // 1. Deny rules first — they outrank every mode, including allowlist.
   for (const rule of DENY_RULES) {

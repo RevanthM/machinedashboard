@@ -213,6 +213,11 @@ async function generateOnce(
         model: opts.model,
         prompt: prompt.prompt,
         stream: false,
+        // gemma4 (and similar) default to a "thinking" pass that burns eval
+        // time without counting toward useful output. On Metal that turned an
+        // ~80 tok/s short-prompt machine into a headline 12 tok/s median.
+        // Benchmarks measure generation throughput, not chain-of-thought.
+        think: false,
         options: {
           num_ctx: BENCH_NUM_CTX,
           temperature: BENCH_TEMPERATURE,
@@ -237,22 +242,37 @@ async function generateOnce(
  * `ollama ps` reports the split — a model that spilled to CPU because VRAM was
  * short reports partial GPU, and reporting it as `cuda` would make a bad result
  * look like bad hardware rather than a too-large model.
+ *
+ * Apple Silicon caveat: older and some current Ollama builds omit `size_vram`
+ * (or report 0) for Metal even when the model is on the GPU, because memory is
+ * unified. Treating "0 VRAM" as CPU on a Metal host produced a false `cpu`
+ * badge next to a real Metal run (and made a starved/cold 12 tok/s look like
+ * the machine's identity). Only trust a zero-VRAM reading on discrete-GPU
+ * hosts; on Metal, prefer the specs-inferred backend unless ps shows a
+ * positive `size_vram` confirming residency (which we still record as metal).
  */
 export async function detectBackend(
   baseUrl: string,
   gpu: GpuInfo[],
 ): Promise<GpuInfo['backend']> {
+  const inferred = gpu[0]?.backend ?? 'cpu';
   try {
     const res = await fetch(`${baseUrl}/api/ps`, { signal: AbortSignal.timeout(10_000) });
     if (res.ok) {
-      const body = (await res.json()) as { models?: Array<{ size_vram?: number }> };
+      const body = (await res.json()) as {
+        models?: Array<{ size_vram?: number }>;
+      };
       const loaded = body.models?.[0];
-      if (loaded && (loaded.size_vram ?? 0) === 0) return 'cpu';
+      if (loaded) {
+        const vram = loaded.size_vram ?? 0;
+        if (vram === 0 && inferred !== 'metal') return 'cpu';
+        if (vram > 0) return inferred === 'cpu' ? 'cuda' : inferred;
+      }
     }
   } catch {
     // Fall through to the GPU-based inference below.
   }
-  return gpu[0]?.backend ?? 'cpu';
+  return inferred;
 }
 
 export async function isOllamaHealthy(baseUrl: string): Promise<boolean> {

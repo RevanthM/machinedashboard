@@ -51,9 +51,11 @@ export class NetBirdProvider implements MeshProvider {
     const peers = await this.request<NetBirdPeer[]>('/api/peers');
     return peers.map((p) => ({
       id: p.id,
-      // NetBird reports both a display name and the OS-reported hostname; the
-      // latter is what actually matches our host records.
-      hostname: p.hostname ?? p.name ?? p.id,
+      // Prefer the enrolled display name (`--hostname` / setup name) over the
+      // OS-reported hostname. Those diverge on this fleet (e.g. Tailscale
+      // `matha-windows-3080` vs OS `Matha-Windows-3080-5TB`), and migration
+      // matching keys off the enrolled name.
+      hostname: p.name ?? p.hostname ?? p.id,
       ip: p.ip,
       os: p.os,
       connected: p.connected ?? false,

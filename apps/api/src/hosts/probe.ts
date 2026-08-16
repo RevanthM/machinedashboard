@@ -173,6 +173,7 @@ export async function probeAndRecord(ctx: HostContext, host: Host): Promise<Prob
           ? 'auth_failed'
           : 'unreachable',
       lastSeenAt: result.ok ? now : undefined,
+      lastCheckedAt: now,
       lastError: result.ok ? null : `${result.error} ${result.remedy ?? ''}`.trim(),
       updatedAt: now,
     })

@@ -8,15 +8,17 @@
  *
  *   npx tsx scripts/verify-mesh-live.ts
  */
+import '../src/env.js';
+import { config } from '../src/config.js';
 import { createMeshProvider, createMigrationWitness, type MeshEnv } from '../src/mesh/index.js';
 import type { MeshPeer } from '../src/mesh/types.js';
 import { normalizeHostname } from '../src/mesh/types.js';
 
 const env: MeshEnv = {
-  provider: (process.env.MESH_PROVIDER as MeshEnv['provider']) ?? 'netbird',
-  netbirdMgmtUrl: process.env.NETBIRD_MGMT_URL,
-  netbirdPat: process.env.NETBIRD_PAT,
-  netbirdSetupKey: process.env.NETBIRD_SETUP_KEY,
+  provider: config.mesh.provider,
+  netbirdMgmtUrl: config.mesh.netbirdMgmtUrl,
+  netbirdPat: config.mesh.netbirdPat,
+  netbirdSetupKey: config.mesh.netbirdSetupKey,
   tailscaleBin:
     process.env.TAILSCALE_BIN ??
     (process.platform === 'win32'

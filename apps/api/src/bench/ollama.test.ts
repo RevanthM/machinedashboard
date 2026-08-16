@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { BENCH_NUM_CTX, BENCH_PROMPTS, BENCH_SEED, BENCH_TEMPERATURE, deriveMetrics } from './ollama.js';
+import {
+  BENCH_NUM_CTX,
+  BENCH_PROMPTS,
+  BENCH_SEED,
+  BENCH_TEMPERATURE,
+  deriveMetrics,
+  detectBackend,
+} from './ollama.js';
 
 const NS = 1e9;
 
@@ -86,5 +93,26 @@ describe('benchmark suite comparability (R-19)', () => {
     expect(long.prompt).toContain('host-0:');
     expect(long.prompt).toContain('host-59:');
     expect(long.prompt).not.toMatch(/\d{13}/); // no epoch timestamps
+  });
+});
+
+describe('detectBackend', () => {
+  it('does not treat missing Metal VRAM as CPU', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ models: [{ size_vram: 0 }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+    try {
+      await expect(
+        detectBackend('http://127.0.0.1:11434', [{ model: 'Apple M4', backend: 'metal' }]),
+      ).resolves.toBe('metal');
+      await expect(
+        detectBackend('http://127.0.0.1:11434', [{ model: 'RTX 3080', backend: 'cuda' }]),
+      ).resolves.toBe('cpu');
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });

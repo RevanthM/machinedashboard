@@ -56,9 +56,22 @@ export interface Benchmark {
   backend?: 'cuda' | 'metal' | 'rocm' | 'cpu';
 }
 
+export interface HostLlmInfo {
+  chatModel: string;
+  benchModel: string;
+  where: 'forced_operator' | 'this_host' | 'operator_fallback' | 'unavailable';
+  baseUrl: string | null;
+  hostOllamaUrl: string | null;
+  hostOllamaUp: boolean;
+  operatorOllamaUp: boolean;
+  summary: string;
+}
+
 export interface Host {
   id: string;
   name: string;
+  nickname?: string | null;
+  displayName?: string;
   host: string | null;
   hostname: string | null;
   os: string | null;
@@ -73,11 +86,19 @@ export interface Host {
   tags: string[];
   enableOllama: boolean;
   status: 'unknown' | 'online' | 'unreachable' | 'auth_failed' | 'error';
+  lastSeenAt: number | null;
+  lastCheckedAt: number | null;
+  meshLastSeenAt?: number | null;
   lastError: string | null;
   provisionState: string;
   activeAddress: { address: string; source: 'mesh' | 'inventory' | 'hostname' } | null;
   specs: HostSpecs | null;
   latestBenchmark: Benchmark | null;
+  llm?: HostLlmInfo | null;
+}
+
+export function hostLabel(host: Pick<Host, 'name' | 'nickname' | 'displayName'>): string {
+  return host.displayName || host.nickname?.trim() || host.name;
 }
 
 export interface ProbeResult {
@@ -135,6 +156,43 @@ export interface AuditEntry {
   durationMs: number | null;
 }
 
+export interface ChatSession {
+  id: string;
+  hostId: string;
+  title: string | null;
+  createdAt: number;
+}
+
+export interface ChatAttachment {
+  id: string;
+  filename: string;
+  kind: 'text' | 'image' | 'binary' | string;
+  url: string;
+  bytes?: number;
+}
+
+export interface ChatSessionMessage {
+  id: string;
+  sessionId: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  content: string | null;
+  toolCalls?: unknown;
+  attachments?: ChatAttachment[] | null;
+  ts: number;
+}
+
+export interface ChatPending {
+  callId: string;
+  tool: string;
+  hostName: string;
+  hostAddress: string;
+  subject: string;
+  body?: string;
+  reason: string;
+  requiresTypedConfirmation: boolean;
+  typedConfirmationPhrase?: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -186,4 +244,142 @@ export const api = {
     }>(`/api/hosts/${id}/rdp/preflight`),
   settings: () => request<Record<string, unknown>>('/api/settings'),
   pool: () => request<{ size: number; maxEntries: number; entries: unknown[] }>('/api/debug/pool'),
+
+  chatSessions: (hostId: string) =>
+    request<{ sessions: ChatSession[] }>(`/api/chat/${hostId}/sessions`),
+  createChatSession: (hostId: string, title?: string) =>
+    request<{ id: string; hostId: string }>(`/api/chat/${hostId}/sessions`, {
+      method: 'POST',
+      body: JSON.stringify({ title }),
+    }),
+  chatThread: (sessionId: string) =>
+    request<{
+      session: ChatSession;
+      messages: ChatSessionMessage[];
+      pending: ChatPending | null;
+    }>(`/api/chat/sessions/${sessionId}`),
+  sendChatMessage: (sessionId: string, text: string, attachmentIds: string[] = []) =>
+    request<{
+      finalText: string | null;
+      pending: ChatPending | null;
+      truncationNotice?: string;
+      model: string;
+      baseUrl: string;
+    }>(`/api/chat/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ text, attachmentIds }),
+    }),
+  uploadAttachment: async (file: File) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    const res = await fetch('/api/attachments', { method: 'POST', body: form });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(body.slice(0, 300) || `${res.status} ${res.statusText}`);
+    }
+    return res.json() as Promise<{
+      id: string;
+      filename: string;
+      bytes: number;
+      kind: 'text' | 'image' | 'binary';
+      inlineable: boolean;
+      url: string;
+    }>;
+  },
+  approveChat: (sessionId: string, typedConfirmation?: string) =>
+    request<{ finalText: string | null; pending: ChatPending | null }>(
+      `/api/chat/sessions/${sessionId}/approve`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ typedConfirmation }),
+      },
+    ),
+  denyChat: (sessionId: string) =>
+    request<{ finalText: string | null; pending: ChatPending | null }>(
+      `/api/chat/sessions/${sessionId}/deny`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+
+  patchHost: (id: string, body: Partial<Host> & { nickname?: string | null }) =>
+    request<Host>(`/api/hosts/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+
+  factorySessions: () =>
+    request<{ sessions: Array<{ id: string; title: string | null; createdAt: number }> }>(
+      '/api/factory/sessions',
+    ),
+  createFactorySession: (title?: string) =>
+    request<{ id: string }>('/api/factory/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title }),
+    }),
+  factoryThread: (sessionId: string) =>
+    request<{
+      session: { id: string; title: string | null; createdAt: number };
+      messages: Array<{
+        id: string;
+        role: string;
+        content: string | null;
+        hostIds?: string[] | null;
+        jobId?: string | null;
+        ts: number;
+      }>;
+    }>(`/api/factory/sessions/${sessionId}`),
+  sendFactoryMessage: (sessionId: string, text: string) =>
+    request<{ finalText: string; hostIds: string[]; jobId: string | null; model?: string }>(
+      `/api/factory/sessions/${sessionId}/messages`,
+      { method: 'POST', body: JSON.stringify({ text }) },
+    ),
+
+  jobs: () =>
+    request<{
+      jobs: Array<{
+        id: string;
+        type: string;
+        title: string;
+        status: string;
+        createdAt: number;
+        endedAt: number | null;
+        error: string | null;
+        runs: Array<{
+          id: string;
+          hostId: string;
+          status: string;
+          result: string | null;
+          error: string | null;
+          artifacts?: Array<{ id: string; filename: string; kind: string; url: string }> | null;
+        }>;
+      }>;
+    }>('/api/jobs'),
+  createJob: (body: {
+    type: string;
+    title?: string;
+    hostIds: string[];
+    payload?: Record<string, unknown>;
+    run?: boolean;
+  }) => request<unknown>('/api/jobs', { method: 'POST', body: JSON.stringify(body) }),
+  routeJob: (body: Record<string, unknown>) =>
+    request<unknown>('/api/jobs/route', { method: 'POST', body: JSON.stringify(body) }),
+
+  schedules: () =>
+    request<{
+      schedules: Array<{
+        id: string;
+        name: string;
+        enabled: boolean;
+        everyMinutes: number;
+        jobType: string;
+        lastRunAt: number | null;
+        nextRunAt: number | null;
+      }>;
+    }>('/api/schedules'),
+  createSchedule: (body: {
+    name: string;
+    everyMinutes: number;
+    jobType: string;
+    hostIds?: string[] | null;
+    payload?: Record<string, unknown>;
+    enabled?: boolean;
+  }) => request<unknown>('/api/schedules', { method: 'POST', body: JSON.stringify(body) }),
+  deleteSchedule: (id: string) =>
+    request<{ deleted: boolean }>(`/api/schedules/${id}`, { method: 'DELETE' }),
 };

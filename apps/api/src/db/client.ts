@@ -1,7 +1,9 @@
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { config } from '../config.js';
 import * as schema from './schema.js';
 
@@ -17,7 +19,12 @@ export function createDb(path: string = config.dbPath) {
   sqlite.pragma('foreign_keys = ON');
   sqlite.pragma('busy_timeout = 5000');
 
-  return { sqlite, db: drizzle(sqlite, { schema }) };
+  const db = drizzle(sqlite, { schema });
+  const here = dirname(fileURLToPath(import.meta.url));
+  const migrationsFolder = join(here, '..', '..', 'drizzle');
+  migrate(db, { migrationsFolder });
+
+  return { sqlite, db };
 }
 
 let singleton: ReturnType<typeof createDb> | null = null;

@@ -30,6 +30,8 @@ export const hosts = sqliteTable(
   {
     id: text('id').primaryKey(),
     name: text('name').notNull(),
+    /** Operator-facing alias; inventory `name` stays stable for imports. */
+    nickname: text('nickname'),
 
     /** Bootstrap address from the inventory: LAN IP or DNS name. */
     host: text('host'),
@@ -75,7 +77,10 @@ export const hosts = sqliteTable(
       .$type<'unknown' | 'online' | 'unreachable' | 'auth_failed' | 'error'>()
       .notNull()
       .default('unknown'),
+    /** Last successful SSH/telemetry contact (unix seconds). */
     lastSeenAt: integer('last_seen_at'),
+    /** Last SSH probe or telemetry attempt, success or fail (unix seconds). */
+    lastCheckedAt: integer('last_checked_at'),
     lastError: text('last_error'),
 
     provisionState: text('provision_state')
@@ -256,9 +261,93 @@ export const settings = sqliteTable('settings', {
   updatedAt: integer('updated_at').notNull().default(now),
 });
 
+/** Factory-wide chat (not tied to a single host until a turn resolves one). */
+export const factoryChatSessions = sqliteTable('factory_chat_sessions', {
+  id: text('id').primaryKey(),
+  title: text('title'),
+  createdAt: integer('created_at').notNull().default(now),
+});
+
+export const factoryChatMessages = sqliteTable(
+  'factory_chat_messages',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => factoryChatSessions.id, { onDelete: 'cascade' }),
+    role: text('role').$type<'user' | 'assistant' | 'system'>().notNull(),
+    content: text('content'),
+    /** Host(s) this turn targeted, if any. */
+    hostIds: text('host_ids_json', { mode: 'json' }).$type<string[]>(),
+    jobId: text('job_id'),
+    attachments: text('attachments_json', { mode: 'json' }),
+    ts: integer('ts').notNull().default(now),
+  },
+  (t) => [index('factory_chat_messages_session_idx').on(t.sessionId, t.ts)],
+);
+
+export type JobType = 'agent' | 'exec' | 'benchmark' | 'provision' | 'probe';
+export type JobStatus = 'queued' | 'running' | 'ok' | 'failed' | 'cancelled';
+
+export const jobs = sqliteTable(
+  'jobs',
+  {
+    id: text('id').primaryKey(),
+    type: text('type').$type<JobType>().notNull(),
+    title: text('title').notNull(),
+    /** Agent prompt, shell command, etc. */
+    payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    status: text('status').$type<JobStatus>().notNull().default('queued'),
+    createdAt: integer('created_at').notNull().default(now),
+    startedAt: integer('started_at'),
+    endedAt: integer('ended_at'),
+    error: text('error'),
+  },
+  (t) => [index('jobs_status_idx').on(t.status, t.createdAt)],
+);
+
+export const jobRuns = sqliteTable(
+  'job_runs',
+  {
+    id: text('id').primaryKey(),
+    jobId: text('job_id')
+      .notNull()
+      .references(() => jobs.id, { onDelete: 'cascade' }),
+    hostId: text('host_id')
+      .notNull()
+      .references(() => hosts.id, { onDelete: 'cascade' }),
+    status: text('status').$type<JobStatus>().notNull().default('queued'),
+    result: text('result_text'),
+    artifacts: text('artifacts_json', { mode: 'json' }).$type<
+      Array<{ id: string; filename: string; kind: string; url: string; bytes?: number }>
+    >(),
+    error: text('error'),
+    startedAt: integer('started_at'),
+    endedAt: integer('ended_at'),
+  },
+  (t) => [index('job_runs_job_idx').on(t.jobId), index('job_runs_host_idx').on(t.hostId)],
+);
+
+export const schedules = sqliteTable('schedules', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  everyMinutes: integer('every_minutes').notNull().default(60),
+  jobType: text('job_type').$type<JobType>().notNull(),
+  /** Optional host id list; empty/null = all online hosts. */
+  hostIds: text('host_ids_json', { mode: 'json' }).$type<string[] | null>(),
+  payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>().notNull().default(sql`'{}'`),
+  lastRunAt: integer('last_run_at'),
+  nextRunAt: integer('next_run_at'),
+  createdAt: integer('created_at').notNull().default(now),
+});
+
 export type Host = typeof hosts.$inferSelect;
 export type NewHost = typeof hosts.$inferInsert;
 export type HostSpecs = typeof hostSpecs.$inferSelect;
 export type LlmBenchmark = typeof llmBenchmarks.$inferSelect;
 export type ProvisionRun = typeof provisionRuns.$inferSelect;
 export type CommandAuditRow = typeof commandAudit.$inferSelect;
+export type Job = typeof jobs.$inferSelect;
+export type JobRun = typeof jobRuns.$inferSelect;
+export type Schedule = typeof schedules.$inferSelect;

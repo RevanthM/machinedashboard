@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Circle } from 'lucide-react';
 import type { Host } from './api.js';
 
@@ -72,15 +72,14 @@ export function Button({
     primary: 'border-[var(--color-accent)]/60 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10',
     danger: 'border-[var(--color-bad)]/60 text-[var(--color-bad)] hover:bg-[var(--color-bad)]/10',
   };
+  const sizeClass = size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm';
   return (
     <button
       type="button"
       title={title}
       onClick={onClick}
       disabled={disabled}
-      className={`rounded border bg-transparent ${tones[tone]} ${
-        size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm'
-      } transition-colors disabled:cursor-not-allowed disabled:opacity-40`}
+      className={`rounded border bg-transparent ${tones[tone]} ${sizeClass} transition-colors disabled:cursor-not-allowed disabled:opacity-40`}
     >
       {children}
     </button>
@@ -124,40 +123,92 @@ export function HostPips({ host }: { host: Host }) {
   const mesh: 'ok' | 'bad' | 'unknown' =
     host.meshStatus === 'connected' ? 'ok' : host.meshStatus === 'unknown' ? 'unknown' : 'bad';
 
-  // Ollama health is inferred from a recent benchmark; a host that has never
-  // been benchmarked is unknown rather than broken.
-  const benchAge = host.latestBenchmark
-    ? Date.now() / 1000 - host.latestBenchmark.ts
-    : Number.POSITIVE_INFINITY;
   const llm: 'ok' | 'bad' | 'unknown' | 'warn' = !host.enableOllama
     ? 'unknown'
     : host.provisionState === 'llm_unsupported'
       ? 'bad'
-      : benchAge < 24 * 3600
+      : host.llm?.hostOllamaUp
         ? 'ok'
-        : host.latestBenchmark
+        : host.llm?.operatorOllamaUp
           ? 'warn'
-          : 'unknown';
+          : host.llm
+            ? 'bad'
+            : 'unknown';
 
   return (
     <div className="flex items-center gap-3">
-      <Pip label="ssh" state={ssh} detail={host.lastError ?? `SSH: ${host.status}`} />
-      <Pip label="mesh" state={mesh} detail={`${host.meshProvider}: ${host.meshStatus}`} />
-      <Pip
-        label="llm"
-        state={llm}
-        detail={
-          !host.enableOllama
-            ? 'Ollama disabled for this host'
-            : host.provisionState === 'llm_unsupported'
-              ? 'Insufficient RAM for the model'
-              : host.latestBenchmark
-                ? `Last benchmark ${new Date(host.latestBenchmark.ts * 1000).toLocaleString()}`
-                : 'Never benchmarked'
-        }
-      />
+      <Pip label="ssh" state={ssh} detail={sshPipTitle(host)} />
+      <Pip label="mesh" state={mesh} detail={meshPipTitle(host)} />
+      <Pip label="llm" state={llm} detail={llmPipTitle(host)} />
     </div>
   );
+}
+
+/** On-demand SSH reachability check for one host. */
+export const PROBE_HINT =
+  'SSH reachability check on this host: resolve address → TCP port 22 → login → shell echo. Updates online / unreachable / auth failed. Does not benchmark, collect specs, or ping Ollama.';
+
+/** Same check, every inventory host in parallel. */
+export const PROBE_ALL_HINT =
+  'SSH reachability check on every host now: resolve address → TCP port 22 → login → shell echo. Sets each host online or unreachable. Does not benchmark, collect hardware specs, or start Ollama. The 15s list refresh only re-reads stored SSH status and pings Ollama.';
+
+export const STATUS_FRESHNESS_HINT =
+  'Online/unreachable is the last SSH probe or telemetry poll — not a live stream. "list" is when this page last fetched. Probe all runs a fresh SSH check. Telemetry also updates last-checked about every 15s when a host answers.';
+
+export function sshPipTitle(host: Host): string {
+  const checked = host.lastCheckedAt
+    ? `Last check ${relativeTime(host.lastCheckedAt)} (${absoluteTime(host.lastCheckedAt)}).`
+    : 'Never probed. Press Probe all (or Probe on the host page).';
+  const lastUp =
+    host.lastSeenAt && host.lastSeenAt !== host.lastCheckedAt
+      ? ` Last successful contact ${relativeTime(host.lastSeenAt)} (${absoluteTime(host.lastSeenAt)}).`
+      : '';
+  const err = host.lastError ? ` ${host.lastError}` : '';
+  return `SSH ${host.status}. ${checked}${lastUp} Green means the last check reached a shell. Probe all does this check; it is not live.${err}`;
+}
+
+export function meshPipTitle(host: Host): string {
+  const seen = host.meshLastSeenAt
+    ? ` Control plane last saw it ${relativeTime(host.meshLastSeenAt)} (${absoluteTime(host.meshLastSeenAt)}).`
+    : '';
+  return `Mesh (${host.meshProvider}): ${host.meshStatus}.${seen} This is the overlay control plane, independent of SSH. Probe all does not change mesh. Hollow means the control plane has not reported this peer.`;
+}
+
+export function llmPipTitle(host: Host): string {
+  if (!host.enableOllama) return 'Ollama disabled for this host.';
+  if (host.provisionState === 'llm_unsupported') {
+    return 'This host does not have enough RAM for the configured model.';
+  }
+  if (host.llm?.hostOllamaUp) {
+    return `Ollama is up on this host (${host.llm.hostOllamaUrl ?? 'local'}). Checked over HTTP on the last list fetch, not by Probe all.`;
+  }
+  if (host.llm?.operatorOllamaUp) {
+    return "This host's Ollama is down. Chat falls back to the operator laptop. Probe all does not ping Ollama — the list fetch does.";
+  }
+  if (host.llm) {
+    return 'Ollama is not reachable on this host or the operator. Probe all does not ping Ollama.';
+  }
+  return 'Ollama status unknown.';
+}
+
+export function checkedLineTitle(host: Host): string {
+  return [
+    host.lastCheckedAt
+      ? `Last SSH probe or telemetry attempt: ${absoluteTime(host.lastCheckedAt)}.`
+      : 'No SSH check recorded yet. Press Probe all.',
+    host.lastSeenAt
+      ? `Last successful SSH contact: ${absoluteTime(host.lastSeenAt)}.`
+      : 'Never reached a shell.',
+    'A failed check updates "checked" but not "last up".',
+  ].join(' ');
+}
+
+export function benchTitle(host: Host): string {
+  const b = host.latestBenchmark;
+  if (!b) {
+    return 'No benchmark yet. This is not live tok/s. Re-bench from the host Overview tab. Probe all does not benchmark.';
+  }
+  return `Last Ollama benchmark of ${b.model}: ${fmtTps(b.evalTps)} eval tok/s at ${absoluteTime(b.ts)}. Historical, not live inference speed. Probe all does not re-bench.`;
 }
 
 export function BackendBadge({ backend }: { backend?: string | null }) {
@@ -171,7 +222,18 @@ export function BackendBadge({ backend }: { backend?: string | null }) {
           ? 'border-[var(--color-warn)]/50 text-[var(--color-warn)]'
           : 'border-[var(--color-muted)]/50 text-[var(--color-muted)]';
   return (
-    <span className={`mono rounded border px-1.5 py-0.5 text-[10px] uppercase ${tone}`}>
+    <span
+      className={`mono rounded border px-1.5 py-0.5 text-[10px] uppercase ${tone}`}
+      title={
+        backend === 'cuda'
+          ? 'Last benchmark ran on NVIDIA CUDA'
+          : backend === 'metal'
+            ? 'Last benchmark ran on Apple Metal'
+            : backend === 'rocm'
+              ? 'Last benchmark ran on AMD ROCm'
+              : 'Last benchmark ran on CPU (no accelerator used)'
+      }
+    >
       {backend}
     </span>
   );
@@ -209,11 +271,27 @@ export function fmtTps(value?: number | null): string {
   return value === undefined || value === null ? '—' : value.toFixed(1);
 }
 
-export function relativeTime(unixSec?: number | null): string {
+/** Re-render on an interval so relative timestamps stay honest. */
+export function useNow(intervalMs = 15_000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
+export function relativeTime(unixSec?: number | null, nowMs = Date.now()): string {
   if (!unixSec) return 'never';
-  const delta = Date.now() / 1000 - unixSec;
-  if (delta < 60) return 'just now';
+  const delta = nowMs / 1000 - unixSec;
+  if (delta < 10) return 'just now';
+  if (delta < 60) return `${Math.floor(delta)}s ago`;
   if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
   if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
   return `${Math.floor(delta / 86400)}d ago`;
+}
+
+export function absoluteTime(unixSec?: number | null): string {
+  if (!unixSec) return 'never';
+  return new Date(unixSec * 1000).toLocaleString();
 }

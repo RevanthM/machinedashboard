@@ -62,7 +62,8 @@ export const config = {
     approvalMode: str('AGENT_APPROVAL_MODE', 'always_ask') as
       | 'always_ask'
       | 'writes_only'
-      | 'allowlist',
+      | 'allowlist'
+      | 'trust',
     model: str('AGENT_MODEL'),
     modelBaseUrl: str('AGENT_MODEL_BASE_URL'),
   },

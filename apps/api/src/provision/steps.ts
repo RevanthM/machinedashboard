@@ -322,13 +322,17 @@ const installOllama: ProvisionStep = {
         // reported "ollama not found" on a host that had it all along, so the
         // link is repaired explicitly rather than left to the install verb.
         //
-        // OLLAMA_HOST is exported so the benchmark harness can reach it over
-        // the mesh, matching the Linux override.
+        // brew services ignores `launchctl setenv` — OLLAMA_HOST must live in
+        // the formula plist or the daemon keeps binding 127.0.0.1 and remote
+        // benchmarks time out. Patch the plist explicitly, then restart.
         await ctx.exec(
           `${BREW_ENV}
 brew install ollama || brew link --overwrite ollama
 command -v ollama >/dev/null 2>&1 || brew link --overwrite ollama
-launchctl setenv OLLAMA_HOST 0.0.0.0:11434 || true
+PLIST="$(brew --prefix)/opt/ollama/homebrew.mxcl.ollama.plist"
+/usr/libexec/PlistBuddy -c 'Delete :EnvironmentVariables' "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c 'Add :EnvironmentVariables dict' "$PLIST"
+/usr/libexec/PlistBuddy -c 'Add :EnvironmentVariables:OLLAMA_HOST string 0.0.0.0:11434' "$PLIST"
 brew services restart ollama || brew services start ollama`,
           { timeoutMs: 900_000 },
         );
